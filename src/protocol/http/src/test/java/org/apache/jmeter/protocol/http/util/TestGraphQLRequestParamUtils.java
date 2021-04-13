@@ -57,13 +57,14 @@ class TestGraphQLRequestParamUtils {
 
     private static final String VARIABLES =
             "{\n"
-            + "  \"id\": \"2001\"\n"
+            + "  \"id\": \"2001\",\n"
+            + "  \"maxFriends\": ${max.friends}\n"
             + "}\n";
 
     private static final String EXPECTED_QUERY_GET_PARAM_VALUE =
             "query($id: ID!) { droid(id: $id) { id name friends { id name appearsIn } } }";
 
-    private static final String EXPECTED_VARIABLES_GET_PARAM_VALUE = "{\"id\":\"2001\"}";
+    private static final String EXPECTED_VARIABLES_GET_PARAM_VALUE = "{\"id\":\"2001\",\"maxFriends\":${max.friends}}";
 
     private static final String EXPECTED_POST_BODY =
             "{"

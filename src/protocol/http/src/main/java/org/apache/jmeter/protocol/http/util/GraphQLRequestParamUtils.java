@@ -17,13 +17,12 @@
 
 package org.apache.jmeter.protocol.http.util;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.util.regex.Pattern;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RegExUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.entity.ContentType;
@@ -56,6 +55,12 @@ public final class GraphQLRequestParamUtils {
 
     private static final Pattern WHITESPACES_PATTERN = Pattern.compile("\\p{Space}+");
 
+    private static final Pattern JMETER_VARIABLE_REFERENCE_PATTERN = Pattern
+            .compile("(:\\s*)\\$\\{([^\\$\\{\\}]+)\\}([\\s,\\}])");
+
+    private static final Pattern INTERNAL_JMETER_JSON_REFERENCE_PATTERN = Pattern
+            .compile("\\{\"\\$ref\":\"jmeter#\\/nonStringVariables\\/([^\\$\\{\\}\\/\"]+)\"\\}");
+
     private GraphQLRequestParamUtils() {
     }
 
@@ -86,7 +91,8 @@ public final class GraphQLRequestParamUtils {
 
         if (StringUtils.isNotBlank(params.getVariables())) {
             try {
-                final ObjectNode variablesJson = mapper.readValue(params.getVariables(), ObjectNode.class);
+                final ObjectNode variablesJson = mapper.readValue(escapeJMeterVariableReferences(params.getVariables()),
+                        ObjectNode.class);
                 postBodyJson.set(VARIABLES_FIELD, variablesJson);
             } catch (JsonProcessingException e) {
                 log.error("Ignoring the GraphQL query variables content due to the syntax error: {}",
@@ -97,7 +103,7 @@ public final class GraphQLRequestParamUtils {
         postBodyJson.set(QUERY_FIELD, JsonNodeFactory.instance.textNode(StringUtils.trim(params.getQuery())));
 
         try {
-            return mapper.writeValueAsString(postBodyJson);
+            return unescapeJMeterVariableReferences(mapper.writeValueAsString(postBodyJson));
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Cannot serialize JSON for POST body string", e);
         }
@@ -121,8 +127,9 @@ public final class GraphQLRequestParamUtils {
         final ObjectMapper mapper = new ObjectMapper();
 
         try {
-            final ObjectNode variablesJson = mapper.readValue(variables, ObjectNode.class);
-            return mapper.writeValueAsString(variablesJson);
+            final ObjectNode variablesJson = mapper.readValue(escapeJMeterVariableReferences(variables),
+                    ObjectNode.class);
+            return unescapeJMeterVariableReferences(mapper.writeValueAsString(variablesJson));
         } catch (JsonProcessingException e) {
             log.error("Ignoring the GraphQL query variables content due to the syntax error: {}",
                     e.getLocalizedMessage());
@@ -148,8 +155,9 @@ public final class GraphQLRequestParamUtils {
         final ObjectMapper mapper = new ObjectMapper();
         ObjectNode data;
 
-        try (InputStreamReader reader = new InputStreamReader(new ByteArrayInputStream(postData), encoding)) {
-            data = mapper.readValue(reader, ObjectNode.class);
+        try {
+            final String postJson = IOUtils.toString(postData, "UTF-8");
+            data = mapper.readValue(escapeJMeterVariableReferences(postJson), ObjectNode.class);
         } catch (IOException e) {
             throw new IllegalArgumentException("Invalid json data: " + e.getLocalizedMessage());
         }
@@ -178,7 +186,7 @@ public final class GraphQLRequestParamUtils {
             final JsonNodeType nodeType = variablesNode.getNodeType();
             if (nodeType != JsonNodeType.NULL) {
                 if (nodeType == JsonNodeType.OBJECT) {
-                    variables = mapper.writeValueAsString(variablesNode);
+                    variables = unescapeJMeterVariableReferences(mapper.writeValueAsString(variablesNode));
                 } else {
                     throw new IllegalArgumentException("Not a valid object node for GraphQL variables.");
                 }
@@ -236,6 +244,16 @@ public final class GraphQLRequestParamUtils {
         }
 
         return new GraphQLRequestParams(operationName, query, variables);
+    }
+
+    private static String escapeJMeterVariableReferences(final String json) {
+        final String jsonRef = "{\"\\$ref\":\"jmeter#/nonStringVariables/$2\"}";
+        return RegExUtils.replaceAll(json, JMETER_VARIABLE_REFERENCE_PATTERN, "$1" + jsonRef + "$3");
+    }
+
+    private static String unescapeJMeterVariableReferences(final String json) {
+        final String jmeterRef = "\\$\\{$1\\}";
+        return RegExUtils.replaceAll(json, INTERNAL_JMETER_JSON_REFERENCE_PATTERN, jmeterRef);
     }
 
     private static String encodedField(final String value, final String encoding, final boolean isEncoded)
